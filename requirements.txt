@@ -3,3 +3,4 @@ pdf2image
 azure-storage-blob
 python-dotenv
 openai==1.1.2
+flask

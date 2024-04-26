@@ -1,14 +1,15 @@
 import os
 from dotenv import load_dotenv
-
 from PyPDF2 import PdfReader, PdfWriter
 from pdf2image import convert_from_path
-
 from azure.storage.blob import BlobServiceClient
-
 import base64
 from mimetypes import guess_type
 from openai import AzureOpenAI
+import uuid
+from flask import Flask, request, jsonify
+
+app = Flask(__name__)
 
 load_dotenv()
 
@@ -61,6 +62,7 @@ def local_image_to_data_url(image_path):
     return f"data:{mime_type};base64,{base64_encoded_data}"
 
 def call_openai_api():
+    
     content_list = [] 
     
     api_base = os.getenv('AZURE_OPENAI_ENDPOINT')
@@ -97,7 +99,7 @@ def call_openai_api():
                 max_tokens=2000 
             )
 
-            content = response['choices'][0]['message']['content']
+            content = response.choices[0].message.content
             print(content)
             
             # Add the content to the list
@@ -105,6 +107,31 @@ def call_openai_api():
             
     return content_list
  
-if __name__ == "__main__":
-    # process_pdfs_in_azure_container(os.environ['AZURE_STORAGE_CONNECTION_STRING'], os.environ['AZURE_STORAGE_CONTAINER_NAME'])
+def push_content_to_azure_container(content_list, storage_connection_string, container_name):
+    
+    blob_service_client = BlobServiceClient.from_connection_string(storage_connection_string)
+    container_client = blob_service_client.get_container_client(container_name)
+
+    for content in content_list:
+        # Generate a unique blob name
+        blob_name = f"content_{uuid.uuid4()}.txt"
+        
+        # Convert content to bytes
+        content_bytes = content.encode('utf-8')
+        
+        # Upload content to the container
+        container_client.upload_blob(name=blob_name, data=content_bytes)
+        
+        print(f"Uploaded content to Azure Blob Storage: {blob_name}")
+
+
+@app.route('/process', methods=['GET'])
+def process():
+    process_pdfs_in_azure_container(os.environ['AZURE_STORAGE_CONNECTION_STRING'], os.environ['AZURE_STORAGE_CONTAINER_NAME'])
     content_list = call_openai_api()
+    push_content_to_azure_container(content_list, os.environ['AZURE_STORAGE_CONNECTION_STRING'], os.environ['AZURE_STORAGE_RESPONSE_CONTAINER_NAME'])
+    return jsonify({"status": "success"}), 200
+
+ 
+if __name__ == "__main__":
+    app.run(debug=True)
