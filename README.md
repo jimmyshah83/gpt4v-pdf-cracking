@@ -10,15 +10,18 @@ For Ubuntu
 ### Deploy to Azure functions
 
 1: Build the Docker image locally
-docker build -t myfunctionapp .
+`docker build -t myfunctionapp .`
+
+2. Run the application
+`docker run -p 5000:5000 image-name`
 
 2: Push the Docker image to a container registry (Azure Container Registry in this case)
 
 Login to Azure Container Registry (replace 'myregistry' with your registry name)
-az acr login --name myregistry
+`az acr login --name myregistry`
 
-Tag the image
-docker tag myfunctionapp myregistry.azurecr.io/myfunctionapp:v1.0.0
+3. Tag the image
+`docker tag myfunctionapp myregistry.azurecr.io/myfunctionapp:v1.0.0`
 
 Push the image
 docker push myregistry.azurecr.io/myfunctionapp:v1.0.0

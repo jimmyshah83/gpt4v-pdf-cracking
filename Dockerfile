@@ -1,14 +1,13 @@
-# To enable ssh & remote debugging on app service change the base image to the one below
-# FROM mcr.microsoft.com/azure-functions/python:4-python3.10-appservice
-FROM mcr.microsoft.com/azure-functions/python:4-python3.10
+FROM python:3.12-slim-bookworm
 
-ENV AzureWebJobsScriptRoot=/home/site/wwwroot \
-    AzureFunctionsJobHost__Logging__Console__IsEnabled=true
+WORKDIR /usr/src/app
+
+COPY requirements.txt .
+RUN pip install -r requirements.txt
 
 # Install poppler-utils
 RUN apt-get update && apt-get install -y poppler-utils
 
-COPY requirements.txt /
-RUN pip install -r /requirements.txt
+COPY . .
 
-COPY . /home/site/wwwroot
+CMD ["python", "app.py"]

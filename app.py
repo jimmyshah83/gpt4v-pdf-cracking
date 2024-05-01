@@ -7,7 +7,8 @@ import base64
 from mimetypes import guess_type
 from openai import AzureOpenAI
 import uuid
-from flask import Flask, request, jsonify
+from flask import Flask, jsonify
+import shutil
 
 app = Flask(__name__)
 
@@ -30,6 +31,8 @@ def process_pdfs_in_azure_container(storage_connection_string, container_name):
             convert_pdf_to_jpeg(download_file_path, 'output/jpeg_images')
 
 def split_pdf_pages(pdf_path, output_folder):
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
     pdf = PdfReader(pdf_path)
     for page in range(len(pdf.pages)):
         pdf_writer = PdfWriter()
@@ -43,6 +46,8 @@ def split_pdf_pages(pdf_path, output_folder):
         print(f'Created: {output_filename}')
 
 def convert_pdf_to_jpeg(pdf_path, output_folder):
+    if not os.path.exists(output_folder):
+        os.makedirs(output_folder)
     images = convert_from_path(pdf_path)
     for i, image in enumerate(images):
         image.save(f'{output_folder}/{os.path.splitext(os.path.basename(pdf_path))[0]}_image_{i + 1}.jpeg', 'JPEG')
@@ -69,6 +74,11 @@ def call_openai_api():
     api_key=os.getenv('AZURE_OPENAI_KEY')
     deployment_name = os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME')
     api_version = '2023-12-01-preview'
+    temperature = os.getenv('AZURE_OPENAI_TEMPERATURE')
+    top_p = os.getenv('AZURE_OPENAI_TOP_P')
+    
+    cv_endpoint = os.getenv('AZURE_COMPUTER_VISION_ENDPOINT')
+    cv_key = os.getenv('AZURE_COMPUTER_VISION_KEY')
 
     client = AzureOpenAI(
         api_key=api_key,  
@@ -84,6 +94,8 @@ def call_openai_api():
             base64Image = local_image_to_data_url(file_path)
             
             response = client.chat.completions.create(
+                temperature=temperature,
+                top_p=top_p,
                 model=deployment_name,
                 messages=[
                     { "role": "system", "content": os.environ['AZURE_OPENAI_SYSTEM_MESSAGE'] },
@@ -96,6 +108,24 @@ def call_openai_api():
                         }
                     ] } 
                 ],
+                extra_body={
+                    "dataSources": [
+                        {
+                            "type": "AzureComputerVision",
+                            "parameters": {
+                                "endpoint": cv_endpoint,
+                                "key": cv_key
+                            }
+                        }],
+                    "enhancements": {
+                        "ocr": {
+                            "enabled": True
+                        },
+                        "grounding": {
+                            "enabled": True
+                        }
+                    }
+                },
                 max_tokens=2000 
             )
 
@@ -130,8 +160,16 @@ def process():
     process_pdfs_in_azure_container(os.environ['AZURE_STORAGE_CONNECTION_STRING'], os.environ['AZURE_STORAGE_CONTAINER_NAME'])
     content_list = call_openai_api()
     push_content_to_azure_container(content_list, os.environ['AZURE_STORAGE_CONNECTION_STRING'], os.environ['AZURE_STORAGE_RESPONSE_CONTAINER_NAME'])
+    
+    # Delete the output folder
+    shutil.rmtree('output')
+    
+    return jsonify({"status": "success"}), 200
+
+@app.route('/', methods=['GET'])
+def hello_world():
     return jsonify({"status": "success"}), 200
 
  
 if __name__ == "__main__":
-    app.run(host='0.0.0.0', debug=True)
+    app.run(host='0.0.0.0', debug=True, port=3000)
