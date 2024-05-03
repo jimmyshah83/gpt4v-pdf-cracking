@@ -28,8 +28,15 @@ def process_pdfs_in_azure_container(storage_connection_string, container_name):
                 download_file.write(blob_client.download_blob().readall())
 
             split_pdf_pages(download_file_path, 'output/split_pdfs')
-            convert_pdf_to_jpeg(download_file_path, 'output/jpeg_images')
-
+            
+        elif blob.name.endswith(".msg"):
+            blob_client = blob_service_client.get_blob_client(container_name, blob.name)
+            # Download the blob to a local file
+            download_file_path = os.path.join("/tmp", blob.name)
+            with open(download_file_path, "wb") as download_file:
+                download_file.write(blob_client.download_blob().readall())
+            convert_msg_to_pdf(download_file_path, 'output/converted_pdfs')
+            
 def split_pdf_pages(pdf_path, output_folder):
     if not os.path.exists(output_folder):
         os.makedirs(output_folder)
