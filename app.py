@@ -15,11 +15,13 @@ app = Flask(__name__)
 load_dotenv()
 
 def process_pdfs_in_azure_container(storage_connection_string, container_name):
+    
     blob_service_client = BlobServiceClient.from_connection_string(storage_connection_string)
     container_client = blob_service_client.get_container_client(container_name)
 
     for blob in container_client.list_blobs():
         if blob.name.endswith(".pdf"):
+            
             blob_client = blob_service_client.get_blob_client(container_name, blob.name)
 
             # Download the blob to a local file
@@ -27,20 +29,13 @@ def process_pdfs_in_azure_container(storage_connection_string, container_name):
             with open(download_file_path, "wb") as download_file:
                 download_file.write(blob_client.download_blob().readall())
 
-            split_pdf_pages(download_file_path, 'output/split_pdfs')
-            
-        elif blob.name.endswith(".msg"):
-            blob_client = blob_service_client.get_blob_client(container_name, blob.name)
-            # Download the blob to a local file
-            download_file_path = os.path.join("/tmp", blob.name)
-            with open(download_file_path, "wb") as download_file:
-                download_file.write(blob_client.download_blob().readall())
-            convert_msg_to_pdf(download_file_path, 'output/converted_pdfs')
-            
-def split_pdf_pages(pdf_path, output_folder):
-    if not os.path.exists(output_folder):
-        os.makedirs(output_folder)
+            split_pdf_pages(download_file_path, blob_service_client)
+
+def split_pdf_pages(pdf_path, blob_service_client, output_folder='output/pdf_pages'):
+    
+    page_container_client = blob_service_client.get_container_client(os.environ['AZURE_STORAGE_SPLIT_CONTAINER_NAME'])
     pdf = PdfReader(pdf_path)
+    
     for page in range(len(pdf.pages)):
         pdf_writer = PdfWriter()
         pdf_writer.add_page(pdf.pages[page])
@@ -49,15 +44,17 @@ def split_pdf_pages(pdf_path, output_folder):
 
         with open(output_filename, 'wb') as out:
             pdf_writer.write(out)
+        
+        page_container_client.upload_blob(name=output_filename, data=open(output_filename, "rb"))
+        print(f'Uploaded: {output_filename}')
 
-        print(f'Created: {output_filename}')
-
-def convert_pdf_to_jpeg(pdf_path, output_folder):
-    if not os.path.exists(output_folder):
-        os.makedirs(output_folder)
-    images = convert_from_path(pdf_path)
-    for i, image in enumerate(images):
-        image.save(f'{output_folder}/{os.path.splitext(os.path.basename(pdf_path))[0]}_image_{i + 1}.jpeg', 'JPEG')
+def convert_pdf_to_jpeg(pdf_path = 'output/pdf_pages', output_folder = 'output/jpeg_images'):
+    #  Iterate over each file in the pdf_pages folder
+    for filename in os.listdir(pdf_path):
+        file_path = os.path.join(pdf_path, filename)
+        images = convert_from_path(file_path)
+        for i, image in enumerate(images): 
+            image.save(f'{output_folder}/{os.path.splitext(os.path.basename(file_path))[0]}.jpeg', 'JPEG')
 
 # Function to encode a local image into data URL 
 def local_image_to_data_url(image_path):
@@ -139,9 +136,11 @@ def call_openai_api():
             content = response.choices[0].message.content
             print(content)
             
-            # Add the content to the list
-            content_list.append(content)
-            
+            # Add the content and file name to the list
+            content_list.append({
+                "content": content,
+                "file_name": os.path.splitext(filename)[0]
+            })
     return content_list
  
 def push_content_to_azure_container(content_list, storage_connection_string, container_name):
@@ -150,33 +149,28 @@ def push_content_to_azure_container(content_list, storage_connection_string, con
     container_client = blob_service_client.get_container_client(container_name)
 
     for content in content_list:
-        # Generate a unique blob name
-        blob_name = f"content_{uuid.uuid4()}.txt"
+        # Use name of JPEG image as blob name
+        blob_name = f"{content['file_name']}.txt"
         
         # Convert content to bytes
-        content_bytes = content.encode('utf-8')
+        content_bytes = content['content'].encode('utf-8')
         
         # Upload content to the container
         container_client.upload_blob(name=blob_name, data=content_bytes)
         
         print(f"Uploaded content to Azure Blob Storage: {blob_name}")
 
-
-@app.route('/process', methods=['GET'])
-def process():
+@app.route('/split_pdfs', methods=['GET'])
+def split_pdfsd():
     process_pdfs_in_azure_container(os.environ['AZURE_STORAGE_CONNECTION_STRING'], os.environ['AZURE_STORAGE_CONTAINER_NAME'])
+    return jsonify({"status": "success"}), 200
+
+@app.route('/generate_summary', methods=['GET'])
+def generate_summary():
+    convert_pdf_to_jpeg()
     content_list = call_openai_api()
     push_content_to_azure_container(content_list, os.environ['AZURE_STORAGE_CONNECTION_STRING'], os.environ['AZURE_STORAGE_RESPONSE_CONTAINER_NAME'])
-    
-    # Delete the output folder
-    shutil.rmtree('output')
-    
     return jsonify({"status": "success"}), 200
-
-@app.route('/', methods=['GET'])
-def hello_world():
-    return jsonify({"status": "success"}), 200
-
  
 if __name__ == "__main__":
     app.run(host='0.0.0.0', debug=True, port=3000)
