@@ -29,11 +29,10 @@ def process_pdfs_in_azure_container(storage_connection_string, container_name):
             with open(download_file_path, "wb") as download_file:
                 download_file.write(blob_client.download_blob().readall())
 
-            split_pdf_pages(download_file_path, blob_service_client)
+            split_pdf_pages(download_file_path)
 
-def split_pdf_pages(pdf_path, blob_service_client, output_folder='output/pdf_pages'):
+def split_pdf_pages(pdf_path, output_folder='output/pdf_pages'):
     
-    page_container_client = blob_service_client.get_container_client(os.environ['AZURE_STORAGE_SPLIT_CONTAINER_NAME'])
     pdf = PdfReader(pdf_path)
     
     for page in range(len(pdf.pages)):
@@ -45,8 +44,7 @@ def split_pdf_pages(pdf_path, blob_service_client, output_folder='output/pdf_pag
         with open(output_filename, 'wb') as out:
             pdf_writer.write(out)
         
-        page_container_client.upload_blob(name=output_filename, data=open(output_filename, "rb"))
-        print(f'Uploaded: {output_filename}')
+        print(f'Created: {output_filename}')
 
 def convert_pdf_to_jpeg(pdf_path = 'output/pdf_pages', output_folder = 'output/jpeg_images'):
     #  Iterate over each file in the pdf_pages folder
@@ -160,13 +158,9 @@ def push_content_to_azure_container(content_list, storage_connection_string, con
         
         print(f"Uploaded content to Azure Blob Storage: {blob_name}")
 
-@app.route('/split_pdfs', methods=['GET'])
-def split_pdfsd():
-    process_pdfs_in_azure_container(os.environ['AZURE_STORAGE_CONNECTION_STRING'], os.environ['AZURE_STORAGE_CONTAINER_NAME'])
-    return jsonify({"status": "success"}), 200
-
-@app.route('/generate_summary', methods=['GET'])
+@app.route('/process', methods=['GET'])
 def generate_summary():
+    process_pdfs_in_azure_container(os.environ['AZURE_STORAGE_CONNECTION_STRING'], os.environ['AZURE_STORAGE_CONTAINER_NAME'])
     convert_pdf_to_jpeg()
     content_list = call_openai_api()
     push_content_to_azure_container(content_list, os.environ['AZURE_STORAGE_CONNECTION_STRING'], os.environ['AZURE_STORAGE_RESPONSE_CONTAINER_NAME'])
