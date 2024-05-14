@@ -14,15 +14,18 @@ app = Flask(__name__)
 
 load_dotenv()
 
-def process_pdfs_in_azure_container(storage_connection_string, container_name):
+blob_connection_string = os.environ['AZURE_STORAGE_CONNECTION_STRING']
+pdf_container_name = os.environ['AZURE_STORAGE_CONTAINER_NAME']
+
+def process_pdfs_in_azure_container():
     
-    blob_service_client = BlobServiceClient.from_connection_string(storage_connection_string)
-    container_client = blob_service_client.get_container_client(container_name)
+    blob_service_client = BlobServiceClient.from_connection_string(blob_connection_string)
+    container_client = blob_service_client.get_container_client(pdf_container_name)
 
     for blob in container_client.list_blobs():
         if blob.name.endswith(".pdf"):
             
-            blob_client = blob_service_client.get_blob_client(container_name, blob.name)
+            blob_client = blob_service_client.get_blob_client(pdf_container_name, blob.name)
 
             # Download the blob to a local file
             download_file_path = os.path.join("/tmp", blob.name)
@@ -34,6 +37,8 @@ def process_pdfs_in_azure_container(storage_connection_string, container_name):
 def split_pdf_pages(pdf_path, output_folder='output/pdf_pages'):
     
     pdf = PdfReader(pdf_path)
+    blob_service_client = BlobServiceClient.from_connection_string(blob_connection_string)
+    container_client = blob_service_client.get_container_client(os.environ['AZURE_STORAGE_PAGE_CONTAINER_NAME'])
     
     for page in range(len(pdf.pages)):
         pdf_writer = PdfWriter()
@@ -45,6 +50,13 @@ def split_pdf_pages(pdf_path, output_folder='output/pdf_pages'):
             pdf_writer.write(out)
         
         print(f'Created: {output_filename}')
+        
+        # Upload the created file to Azure Blob Storage
+        with open(output_filename, "rb") as data:
+            raw_file_name = os.path.basename(output_filename)
+            blob_client = container_client.get_blob_client(raw_file_name)
+            blob_client.upload_blob(data, overwrite=True)
+            print(f'Uploaded: {raw_file_name} to Azure Blob Storage')
 
 def convert_pdf_to_jpeg(pdf_path = 'output/pdf_pages', output_folder = 'output/jpeg_images'):
     #  Iterate over each file in the pdf_pages folder
@@ -141,10 +153,10 @@ def call_openai_api():
             })
     return content_list
  
-def push_content_to_azure_container(content_list, storage_connection_string, container_name):
+def push_content_to_azure_container(content_list):
     
-    blob_service_client = BlobServiceClient.from_connection_string(storage_connection_string)
-    container_client = blob_service_client.get_container_client(container_name)
+    blob_service_client = BlobServiceClient.from_connection_string(blob_connection_string)
+    container_client = blob_service_client.get_container_client(os.environ['AZURE_STORAGE_RESPONSE_CONTAINER_NAME'])
 
     for content in content_list:
         # Use name of JPEG image as blob name
@@ -158,13 +170,21 @@ def push_content_to_azure_container(content_list, storage_connection_string, con
         
         print(f"Uploaded content to Azure Blob Storage: {blob_name}")
 
-@app.route('/process', methods=['GET'])
-def generate_summary():
-    process_pdfs_in_azure_container(os.environ['AZURE_STORAGE_CONNECTION_STRING'], os.environ['AZURE_STORAGE_CONTAINER_NAME'])
-    convert_pdf_to_jpeg()
-    content_list = call_openai_api()
-    push_content_to_azure_container(content_list, os.environ['AZURE_STORAGE_CONNECTION_STRING'], os.environ['AZURE_STORAGE_RESPONSE_CONTAINER_NAME'])
+@app.route('/process_pdfs', methods=['GET'])
+def process_pdfs():
+    process_pdfs_in_azure_container()
     return jsonify({"status": "success"}), 200
  
+@app.route('/convert_pdfs', methods=['GET'])
+def convert_pdfs():
+    convert_pdf_to_jpeg()
+    return jsonify({"status": "success"}), 200
+
+@app.route('/generate_summary', methods=['GET'])
+def generate_summary():
+    content_list = call_openai_api()
+    push_content_to_azure_container(content_list)
+    return jsonify({"status": "success"}), 200
+
 if __name__ == "__main__":
     app.run(host='0.0.0.0', debug=True, port=3000)
