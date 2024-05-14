@@ -96,11 +96,11 @@ def call_openai_api():
     )
 
     # Iterate over each file in the jpeg_images folder
-    for filename in os.listdir('output/jpeg_images_tbd'):
+    for filename in os.listdir('output/jpeg_images'):
         print(f"Processing: {filename}")
         
         if filename.endswith('.jpeg'):
-            file_path = os.path.join('output/jpeg_images_tbd', filename)
+            file_path = os.path.join('output/jpeg_images', filename)
             
             base64Image = local_image_to_data_url(file_path)
             
