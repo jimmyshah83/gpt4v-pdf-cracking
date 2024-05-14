@@ -6,20 +6,18 @@ from azure.storage.blob import BlobServiceClient
 import base64
 from mimetypes import guess_type
 from openai import AzureOpenAI
-import uuid
 from flask import Flask, jsonify
-import shutil
 
 app = Flask(__name__)
 
 load_dotenv()
 
-blob_connection_string = os.environ['AZURE_STORAGE_CONNECTION_STRING']
 pdf_container_name = os.environ['AZURE_STORAGE_CONTAINER_NAME']
+blob_service_client = BlobServiceClient.from_connection_string(os.environ['AZURE_STORAGE_CONNECTION_STRING'])
+response_container_client = blob_service_client.get_container_client(os.environ['AZURE_STORAGE_RESPONSE_CONTAINER_NAME'])
 
 def process_pdfs_in_azure_container():
     
-    blob_service_client = BlobServiceClient.from_connection_string(blob_connection_string)
     container_client = blob_service_client.get_container_client(pdf_container_name)
 
     for blob in container_client.list_blobs():
@@ -37,7 +35,6 @@ def process_pdfs_in_azure_container():
 def split_pdf_pages(pdf_path, output_folder='output/pdf_pages'):
     
     pdf = PdfReader(pdf_path)
-    blob_service_client = BlobServiceClient.from_connection_string(blob_connection_string)
     container_client = blob_service_client.get_container_client(os.environ['AZURE_STORAGE_PAGE_CONTAINER_NAME'])
     
     for page in range(len(pdf.pages)):
@@ -82,8 +79,6 @@ def local_image_to_data_url(image_path):
 
 def call_openai_api():
     
-    content_list = [] 
-    
     api_base = os.getenv('AZURE_OPENAI_ENDPOINT')
     api_key=os.getenv('AZURE_OPENAI_KEY')
     deployment_name = os.getenv('AZURE_OPENAI_DEPLOYMENT_NAME')
@@ -101,9 +96,11 @@ def call_openai_api():
     )
 
     # Iterate over each file in the jpeg_images folder
-    for filename in os.listdir('output/jpeg_images'):
+    for filename in os.listdir('output/jpeg_images_tbd'):
+        print(f"Processing: {filename}")
+        
         if filename.endswith('.jpeg'):
-            file_path = os.path.join('output/jpeg_images', filename)
+            file_path = os.path.join('output/jpeg_images_tbd', filename)
             
             base64Image = local_image_to_data_url(file_path)
             
@@ -144,34 +141,21 @@ def call_openai_api():
             )
 
             content = response.choices[0].message.content
-            print(content)
             
-            # Add the content and file name to the list
-            content_list.append({
-                "content": content,
-                "file_name": os.path.splitext(filename)[0]
-            })
+            push_content_to_azure_container(content, os.path.splitext(filename)[0])
             
             os.remove(file_path)
-            
-    return content_list
- 
-def push_content_to_azure_container(content_list):
-    
-    blob_service_client = BlobServiceClient.from_connection_string(blob_connection_string)
-    container_client = blob_service_client.get_container_client(os.environ['AZURE_STORAGE_RESPONSE_CONTAINER_NAME'])
 
-    for content in content_list:
-        # Use name of JPEG image as blob name
-        blob_name = f"{content['file_name']}.txt"
+def push_content_to_azure_container(content, blob_name):
+    
+    # Convert content to bytes
+    content_bytes = content.encode('utf-8')
         
-        # Convert content to bytes
-        content_bytes = content['content'].encode('utf-8')
+    # Upload content to the container
+    response_container_client.upload_blob(name=blob_name, data=content_bytes, overwrite=True)
         
-        # Upload content to the container
-        container_client.upload_blob(name=blob_name, data=content_bytes, overwrite=True)
+    print(f"Uploaded content to Azure Blob Storage: {blob_name}")
         
-        print(f"Uploaded content to Azure Blob Storage: {blob_name}")
 
 @app.route('/process_pdfs', methods=['GET'])
 def process_pdfs():
@@ -185,8 +169,7 @@ def convert_pdfs():
 
 @app.route('/generate_summary', methods=['GET'])
 def generate_summary():
-    content_list = call_openai_api()
-    push_content_to_azure_container(content_list)
+    call_openai_api()    
     return jsonify({"status": "success"}), 200
 
 if __name__ == "__main__":
