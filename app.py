@@ -151,6 +151,9 @@ def call_openai_api():
                 "content": content,
                 "file_name": os.path.splitext(filename)[0]
             })
+            
+            os.remove(file_path)
+            
     return content_list
  
 def push_content_to_azure_container(content_list):
@@ -166,7 +169,7 @@ def push_content_to_azure_container(content_list):
         content_bytes = content['content'].encode('utf-8')
         
         # Upload content to the container
-        container_client.upload_blob(name=blob_name, data=content_bytes)
+        container_client.upload_blob(name=blob_name, data=content_bytes, overwrite=True)
         
         print(f"Uploaded content to Azure Blob Storage: {blob_name}")
 
